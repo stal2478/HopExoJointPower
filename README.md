@@ -18,5 +18,5 @@ All files are in long format. The R Markdown scripts will transform data into wi
 
 # Scripts
 
-- HEJP_stats.Rmd - R Markdownfile for calling each data file for one-way, repeated measures anovas and multiple comparisons testing.
-- HEJP_plots.Rmd - R Markdownfile for creating plots seen in publication.
+- HEJP_stats.Rmd - R Markdown for calling each data file for one-way, repeated measures anovas and multiple comparisons testing.
+- HEJP_plots.Rmd - R Markdown for creating plots seen in publication.
