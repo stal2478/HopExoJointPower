@@ -1,0 +1,241 @@
+---
+title: "HEJP_stats"
+author: "Stephen Allen"
+date: "2023-09-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Install & Load pacakges
+Check to see if packages are installed, and install them if not.
+```{r packages}
+# Define a vector of package names to check and install
+packages_to_install <- c("multcomp","nlme","dplyr","tidyr")
+
+# Check and install packages
+for (package in packages_to_install) {
+  if (!requireNamespace(package, quietly = TRUE)) {
+    install.packages(package, dependencies = TRUE)
+  }
+}
+
+# Load the packages
+library(multcomp)
+library(nlme)
+library(dplyr)
+library(tidyr)
+```
+
+# Whole body kinematics & kinetics 
+```{r kine_stats}
+full_filename = '...kin_data.csv' # your full file name here
+
+kin_data <- read.csv(full_filename)
+kin_data$con <- factor(kin_data$con, levels = c('nh','dg','ln','pg'), ordered = TRUE)
+kin_data$sub <- factor(kin_data$sub)
+
+# convert from long to wide
+kin_data<-kin_data %>% 
+  pivot_wider(id_cols = c(sub,con),
+              names_from = c(var),
+              values_from = value)
+
+# One-way, rmANOVA
+# user defined dependent variables:
+#   - hz = hopping frequency [hz]
+#   - hop_height = peak hop height [m]
+#   - tc = contact time [s]
+#   - fz = peak vertical ground reaction force [N]
+kin_fit <- lme(hop_height ~ con, random = (~1|sub), kin_data, method = 'ML', na.action = na.omit)
+anova(kin_fit)
+
+# Tukey post-hoc multiple comparisons between conditions
+summary(glht(kin_fit, linfct = mcp(con="Tukey")))
+```
+
+# Joint angles & range of motion
+``` {r ang_rom_stats}
+full_filename = '...ang_data.csv' # your full file name here
+
+ang_data <- read.csv(full_filename)
+ang_data$peak <- factor(ang_data$peak, levels = c('max','min','rom'), ordered = TRUE)
+ang_data$con <- factor(ang_data$con, levels = c('nh','dg','ln','pg'), ordered = TRUE)
+ang_data$joint <- factor(ang_data$joint, levels = c('hip','kne','ank'), ordered = TRUE)
+ang_data$sub <- factor(ang_data$sub)
+
+# convert from long to wide
+ang_data<-ang_data %>% 
+  pivot_wider(id_cols = c(sub,con),
+              names_from = c(peak,joint),
+              values_from = value)
+
+# One-way, rmANOVA
+# user defined dependent variables:
+#   - max_ank = peak extension(plantar-flexion) [deg.]
+#   - min_ank = peak flexion (dorsi) [deg.]
+#   - max_kne = peak knee extension [deg.]
+#   - min_kne = peak knee flexion [deg.]
+#   - max_hip = peak hip extension [deg.]
+#   - min_hip = peak hip flexion [deg.]
+#   - rom_ank = ankle range of motion [deg.]
+#   - rom_kne = knee range of motion [deg.]
+#   - rom_hip = hip range of motion [deg.]
+ang_fit <- lme(rom_kne ~ con, random = (~1|sub), ang_data, method = 'ML', na.action = na.omit)
+anova(ang_fit)
+
+# Tukey post-hoc multiple comparisons between conditions
+summary(glht(ang_fit, linfct = mcp(con="Tukey")))
+```
+
+# Avg. Joint moments
+```{r mom_stats}
+full_filename = '...mom_data.csv' # your full file name here
+
+mom_data <- read.csv(full_filename)
+
+mom_data$cont <- factor(mom_data$cont, levels = c('net','exo','bio'), ordered = TRUE)
+mom_data$con <- factor(mom_data$con, levels = c('nh','dg','ln','pg'), ordered = TRUE)
+mom_data$joint <- factor(mom_data$joint, levels = c('hip','kne','ank'), ordered = TRUE)
+mom_data$sub <- factor(mom_data$sub)
+
+# convert from long to wide
+mom_data<-mom_data %>%
+  mutate(value = value*2) %>% # data is averaged between legs, multiply by two estimated what the lower body is doing
+  pivot_wider(id_cols = c(sub,con),
+              names_from = c(cont,joint),
+              values_from = value)
+
+# one-way, rmANOVA
+# user defined dependent variables:
+#   - net_ank = overall (Exo + MTU) internal ankle moment [Nm/kg]
+#   - net_kne = overall (Exo + MTU) internal knee moment [Nm/kg]
+#   - net_hip = overall (Exo + MTU) internal hip moment [Nm/kg]
+#   - exo_ank = exoskeleton contribution to internal ankle moment [Nm/kg]
+#   - exo_kne = exoskeleton contribution to internal knee moment [Nm/kg]
+#   - exo_hip = exoskeleton contribution to internal hip moment [Nm/kg]
+#   - bio_ank = MTU (muscle tendon unit) contribution to internal ankle moment [Nm/kg]
+#   - bio_kne = MTU (muscle tendon unit) contribution to internal knee moment [Nm/kg]
+#   - bio_hip = MTU (muscle tendon unit) contribution to internal hip moment [Nm/kg]
+mom_fit <- lme(bio_ank ~ con, random = (~1|sub), data = mom_data, method = 'ML', na.action = na.exclude)
+anova(mom_fit)
+
+# Tukey post-hoc multiple comparisons between conditions
+summary(glht(mom_fit, linfct = mcp(con="Tukey")))
+```
+
+# Avg. Joint powers
+```{r pow_stat}
+full_filename = '...pow_data.csv' # your full file name here
+
+pow_data <- read.csv(full_filename)
+
+pow_data$cont <- factor(pow_data$cont, levels = c('net','exo','bio'), ordered = TRUE)
+pow_data$con  <- factor(pow_data$con, levels = c('nh','dg','ln','pg'), ordered = TRUE)
+pow_data$joint <- factor(pow_data$joint, levels = c('hip','kne','ank'), ordered = TRUE)
+pow_data$sub  <- factor(pow_data$sub)
+
+pow_data <- pow_data %>% 
+  mutate(value = value*2) %>% # data is averaged from both legs, double it to estimate the lower body
+  pivot_wider(id_cols = c(sub,con),
+              names_from = c(cont,joint,pow),
+              values_from = value) %>% 
+   rowwise() %>%
+              dplyr::mutate(tot_pos = sum(bio_ank_pos,bio_kne_pos,bio_hip_pos,exo_ank_pos,exo_kne_pos,exo_hip_pos,na.rm = T),
+                            tot_neg = sum(bio_ank_neg,bio_kne_neg,bio_hip_neg,exo_ank_neg,exo_kne_neg,exo_hip_neg,na.rm = T),
+                            tot_net = sum(tot_pos,tot_neg)) 
+              
+# One-way, rmANOVA
+# User defined variables:
+#   - net_ank_neg = overall (Exo + MTU) negative internal ankle power [W/kg]
+#   - net_ank_pos = overall (Exo + MTU) positive internal ankle power [W/kg]
+#   - net_kne_neg = overall (Exo + MTU) negative internal knee power [W/kg]
+#   - net_kne_pos = overall (Exo + MTU) positive internal knee power [W/kg]
+#   - net_hip_neg = overall (Exo + MTU) negative internal hip power [W/kg]
+#   - net_hip_pos = overall (Exo + MTU) positive internal hip power [W/kg] 
+#   - exo_ank_neg = exoskeleton contribution to negative internal ankle power [W/kg]
+#   - exo_ank_pos = exoskeleton contribution to positive internal ankle power [W/kg]
+#   - exo_kne_neg = exoskeleton contribution to negative internal knee power [W/kg]
+#   - exo_kne_pos = exoskeleton contribution to positive internal knee power [W/kg]
+#   - exo_hip_neg = exoskeleton contribution to negative internal hip power [W/kg]
+#   - exo_hip_pos = exoskeleton contribution to positive internal hip power [W/kg]
+#   - bio_ank_neg = MTU (muscle-tendon unit) contribution to negative internal ankle power [W/kg]
+#   - bio_ank_pos = MTU (muscle-tendon unit) contribution to positive internal ankle power [W/kg]
+#   - bio_kne_neg = MTU (muscle-tendon unit) contribution to negative internal knee power [W/kg]
+#   - bio_kne_pos = MTU (muscle-tendon unit) contribution to positive internal knee power [W/kg]
+#   - bio_hip_neg = MTU (muscle-tendon unit) contribution to negative internal hip power [W/kg]
+#   - bio_hip_pos = MTU (muscle-tendon unit) contribution to positive internal hip power [W/kg]
+#   - net_ank_net = overall (Exo + MTU) positive + negative internal ankle power [W/kg]
+#   - net_kne_net = overall (Exo + MTU) positive + negative internal knee power [W/kg]
+#   - net_hip_net = overall (Exo + MTU) positive + negative internal hip power [W/kg]
+#   - exo_ank_net = exoskeleton positive + negative internal ankle power [W/kg]
+#   - exo_kne_net = exoskeleton positive + negative internal knee power [W/kg]
+#   - exo_hip_net = exoskeleton positive + negative internal hip power [W/kg]
+#   - bio_ank_net = MTU postive + negative internal ankle power [W/kg]
+#   - bio_kne_net = MTU postive + negative internal knee power [W/kg]
+#   - bio_hip_net = MTU postive + negative internal hip power [W/kg]
+#   - tot_pos = total positive power summed from the ankle, knee, and hip [W/kg]
+#   - tot_neg = total negative power summed from the ankle, knee, and hip [W/kg]
+#   - tot_net = total positive + negative power summed from the ankle, knee, and hip [W/kg]
+lme_fit <- lme(bio_hip_pos ~ con, random = (~1|sub), data = pow_data, method = 'ML', na.action = na.omit)
+anova(lme_fit)
+
+# Tukey post-hoc multiple comparisons between conditions
+summary(glht(lme_fit, linfct = mcp(con="Tukey")))
+```
+
+# Avg. Joint power distribution
+```{r pow_dist_stats}
+full_filename = '...pow_data.csv' # your full file name here
+
+dist_data <- read.csv(full_filename)
+
+dist_data$cont <- factor(dist_data$cont, levels = c('net','exo','bio'), ordered = TRUE)
+dist_data$con  <- factor(dist_data$con, levels = c('nh','dg','ln','pg'), ordered = TRUE)
+dist_data$joint <- factor(dist_data$joint, levels = c('hip','kne','ank'), ordered = TRUE)
+dist_data$sub  <- factor(dist_data$sub)
+
+dist_data <- dist_data %>% 
+  dplyr::filter(!pow == 'net') %>% 
+  pivot_wider(id_cols = c(sub,con),
+              names_from = c(cont,joint,pow),
+              values_from = value) %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(tot_pos = sum(bio_ank_pos,bio_kne_pos,bio_hip_pos,exo_ank_pos,exo_kne_pos,exo_hip_pos,na.rm = T),
+                tot_neg = sum(bio_ank_neg,bio_kne_neg,bio_hip_neg,exo_ank_neg,exo_kne_neg,exo_hip_neg,na.rm = T)) %>% 
+  dplyr::mutate_at(vars(net_ank_pos,net_kne_pos,net_hip_pos,
+                        bio_ank_pos,bio_kne_pos,bio_hip_pos,
+                        exo_ank_pos,exo_kne_pos,exo_hip_pos), list(per=~./tot_pos*100)) %>% 
+  dplyr::mutate_at(vars(net_ank_neg,net_kne_neg,net_hip_neg,
+                        bio_ank_neg,bio_kne_neg,bio_hip_neg,
+                        exo_ank_neg,exo_kne_neg,exo_hip_neg), list(per=~./tot_neg*100))
+
+# one-way, rmANOVA
+# User defined variables, same as previous section with pow_data, but have added:
+#   - net_ank_pos_per = overall (Exo + MTU) positive internal ankle power as a percent of the total positive power [W/kg]
+#   - net_kne_pos_per = overall (Exo + MTU) positive internal knee power as a percent of the total positive power [W/kg]
+#   - net_hip_pos_per = overall (Exo + MTU) positive internal hip power as a percent of the total positive power [W/kg]
+#   - bio_ank_pos_per = MTU (muscle-tendon unit) contribution to positive internal ankle power as a percent of total positive power [W/kg]
+#   - bio_kne_pos_per = MTU (muscle-tendon unit) contribution to positive internal knee power as a percent of total positive power [W/kg]
+#   - bio_hip_pos_per = MTU (muscle-tendon unit) contribution to positive internal hip power as a percent of total positive power [W/kg]
+#   - exo_ank_pos_per = Exoskeleton contribution to positive internal ankle power as a percent of total positive power [W/kg]
+#   - exo_kne_pos_per = Exoskeleton contribution to positive internal knee power as a percent of total positive power [W/kg]
+#   - exo_hip_pos_per = Exoskeleton contribution to positive internal hip power as a percent of total positive power [W/kg]
+#   - net_ank_neg_per = same as above but for negative power...
+#   - net_kne_neg_per
+#   - net_hip_neg_per
+#   - bio_ank_neg_per
+#   - bio_kne_neg_per
+#   - bio_hip_neg_per
+#   - exo_ank_neg_per
+#   - exo_kne_neg_per
+#   - exo_hip_neg_per
+
+lme_fit <- lme(bio_hip_pos ~ con, random = (~1|sub), data = dist_data, method = 'ML', na.action = na.omit)
+anova(lme_fit)
+
+# Tukey post-hoc multiple comparisons between conditions
+summary(glht(lme_fit, linfct = mcp(con="Tukey")))
+```

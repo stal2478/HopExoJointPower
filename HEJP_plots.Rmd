@@ -1,0 +1,368 @@
+---
+title: "EJP_plots"
+author: "Stephen"
+date: "2023-09-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Install & Load pacakges
+```{r packages}
+# Define a vector of package names to check and install
+packages_to_install <- c("ggplot2", "dplyr", "tidyr", "plotrix", "cowplot")
+
+# Check and install packages
+for (package in packages_to_install) {
+  if (!requireNamespace(package, quietly = TRUE)) {
+    install.packages(package, dependencies = TRUE)
+  }
+}
+
+# Load the packages
+library(ggplot2) # plotting package
+library(dplyr) # Data manipulation
+library(tidyr) # Data manipulation
+library(plotrix) # Various plotting functions
+library(cowplot) # plotting on grid layout
+```
+
+# Define helper functions
+```{r helper functions}
+
+agg_data <- function(data, agg_function) {
+#' Function to aggregate time-series and discrete data 
+#' It determines what aggregation function was called (mean, sd, etc.).
+#' Next, it checks if the data frame is time-series (looking for a "cycle" column) or discrete
+#' Then, it groups data by condition and then calculates the aggregation function across all subjects.
+#' Finally, it adds a short hand of the aggregate function ("_avg", '_std', etc.) and creates one data frame.
+#'
+#' @param data data frame
+#' @agg_function aggregation function (mean, sd, or std.error)
+#'
+#' @return data frame aggregated by defined function
+  
+  # determine what function was used
+  if ("mean" %in% sapply(sys.call(), as.character)) {
+    flag = '_avg'
+  } else if ("sd" %in% sapply(sys.call(), as.character)){
+    flag = '_std'
+  } else if ("std.error"%in% sapply(sys.call(), as.character)){
+    flag = '_sem'
+  } else {
+    stop('Aggregation function has not been defined')
+  }
+  if ('cycle' %in% colnames(data)) {
+    # aggregate time series data by sub, using defined function
+    result <- data %>%
+      select(-sub) %>%
+      group_by(con, joint, cont, cycle) %>%
+      summarise_if(is.numeric, agg_function) %>%
+      rename_at(vars(-con, -cycle, -cont, -joint), ~paste0(., flag)) %>%
+      ungroup()
+  } else {
+    # remove extraneous string
+    col_name <- substr(flag, nchar(flag) - 2, nchar(flag))
+    
+    if ('peak' %in% colnames(data)) {
+    # aggregate time series data by sub, using defined function
+    result <- data %>%
+      select(-sub) %>%
+      group_by(con, joint, peak) %>%
+      summarise_if(is.numeric, agg_function) %>%
+      # rename_at(vars(-con, -joint, -peak), ~paste0(., flag)) %>%
+      dplyr::rename(!!col_name := 'value') %>%
+      select(-peak) %>% 
+      ungroup()
+    } else if ('pow' %in% colnames(data)) {
+      result <- data %>% 
+        select(-sub) %>% 
+        group_by(con,joint,cont,pow) %>% 
+        summarise_if(is.numeric,agg_function) %>% 
+        dplyr::rename(!!col_name := 'value') %>%
+        ungroup()
+    } else {
+    result <- data %>%
+      select(-sub) %>%
+      group_by(con, joint, cont) %>%
+      summarise_if(is.numeric, agg_function) %>%
+      # rename_at(vars(-con, -joint, -cont), ~paste0(., flag)) %>%
+      dplyr::rename(!!col_name := 'value') %>%
+      ungroup()
+    }
+  }
+  return(result)
+}
+
+
+factor_and_rename <- function(df){
+#' Function to factor condition, joint, and contribution in a dataframe. 
+#' It also renames variables from Visual3D shorthand to full variable names for plotting.
+#'
+  df <- df %>% 
+    mutate(con = factor(con, levels = c('nh','dg','ln','pg')),
+           joint = case_when(
+             joint == 'hip' ~ "Hip",
+             joint == 'kne' ~ "Knee",
+             joint == 'ank' ~ "Ankle")) %>% 
+    mutate(joint = factor(joint, levels = c('Hip','Knee','Ankle')))
+  
+  if ('cont' %in% colnames(df)) {
+    df <- df %>%
+      mutate(cont = case_when(
+                cont == 'net' ~ "Overall (Exo + MTU)",
+                cont == 'exo' ~ "Exo",
+                cont == 'bio' ~ "MTU")) %>% 
+      mutate(cont = factor(cont, levels = c('Overall (Exo + MTU)','Exo','MTU')),
+              )
+  }
+  return(df)
+}
+
+
+generate_time_series_plot <- function(data, y_variable, y_label) {
+#' time series plotting function
+#' 
+#' @param data time-series data frame
+#' @param y_variable variable to be plotted 
+#' @param y_label yaxis label to print on plot
+#' 
+
+  plot <- data %>%
+    ggplot(aes(x = cycle, y = {{ y_variable }}, color = con)) +
+    geom_rect(aes(xmin = 63, xmax = Inf, ymin = -Inf, ymax = Inf),
+              fill = "lightgrey",
+              color = NA,
+              alpha = 0.2) +
+    geom_hline(yintercept = 0, linetype = 'solid', alpha = 0.1, linewidth = 0.35) +
+    geom_line(linewidth = 0.45) +
+    facet_grid(joint ~ cont, scales = 'free_y') +
+    scale_x_continuous(name = 'Hop Cycle [%]', expand = c(0, 0)) +
+    scale_y_continuous(name = y_label, expand = c(0, .05)) +
+    scale_color_manual(values = c('#558cc9', "#27b34b", "#f8983a", "#c1524f")) +
+    theme_classic() +
+    theme(
+      panel.spacing.x = unit(2, 'cm'),
+      panel.spacing.y = unit(0.5, 'cm'),
+      legend.position = 'bottom',
+      legend.title = element_blank(),
+      text = element_text(size = 9),
+      line = element_line(linewidth = 0.35),
+      plot.title = element_blank()) +
+    ggtitle(title)
+
+  return(plot)
+}
+
+# bar plotting function
+generate_bar_plot <- function(data, y_label, pow_type = NULL) {
+  if (is.null(pow_type)) {
+    # If pow_type is not provided, assume it's 'net' for mom_all and all pow types for pow_all
+    data <- data
+  } else {
+    # Filter the data based on pow_type
+    data <- filter(data, pow == pow_type)
+  }
+
+  # Create the bar plot
+  plot <- data %>%
+    ggplot(aes(x = con, fill = con)) +
+    geom_errorbar(aes(ymin = avg - sem, ymax = avg + sem), width = 0.4, linewidth = 0.25) +
+    geom_bar(aes(y = avg), stat = 'identity', width = 0.6) +
+    geom_hline(yintercept = 0, linewidth = 0.35) +
+    theme_classic() +
+    facet_grid(joint ~ cont, scales = 'free_y') +
+    scale_fill_manual(values = c('#558cc9', '#27b34b', '#f8983a', '#c1524f')) +
+    scale_y_continuous(name = y_label, expand = c(0, 0.05)) +
+    theme(
+      panel.spacing.x = unit(3, 'cm'),
+      panel.spacing.y = unit(0.5, 'cm'),
+      axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.line.x = element_blank(),
+      legend.title = element_blank(),
+      legend.position = 'bottom',
+      text = element_text(size = 9),
+      line = element_line(linewidth = 0.35),
+      plot.title = element_blank()
+    )
+
+  return(plot)
+}
+```
+
+# Import time-series data
+```{r import time series}
+full_filename <- "...time_series.csv" #your full filename here
+
+# read file
+time_series_raw <- read.csv(full_filename)
+# establish factor levels for plotting order
+time_series_raw <- factor_and_rename(time_series_raw)
+# pivot to wide format and multiply joint moment and power by 2.
+# raw moment and power data are the average of both legs, multiply by 2 to estimate both legs
+temp <- time_series_raw %>% 
+  pivot_wider(id_cols = c(joint,cont,sub,con,cycle),
+              names_from = var,
+              values_from = value) %>% 
+  mutate(mom = mom*2,
+         pow = pow*2)
+# calculate cycle average data across all subjects
+time_series_avg <- agg_data(temp, mean)
+# calculate cycle standard deviations across all subjects
+time_series_std <- agg_data(temp, sd)
+# combine avg. and sd. dataframes for plotting purposes
+time_series <- bind_cols(time_series_avg, dplyr::select(time_series_std, -c(con,cycle,cont,joint)))
+```
+
+
+# Import discrete data
+```{r import point data}
+#### ROM ###
+full_filename <- '...ang_data.csv'
+rom_data <- read.csv(full_filename)
+
+# filter for range of motion
+rom_data <- rom_data %>%
+  filter(peak == 'rom') # 'min' and 'max' are also options
+# factor levels
+rom_data <- factor_and_rename(rom_data)
+# aggregate data by subject to calculate average
+ang_avg <- agg_data(rom_data, mean)
+# aggregate data by subject to calculate standard error
+ang_sem <- agg_data(rom_data, std.error)
+# bind dataframes together
+ang_all <- bind_cols(ang_avg, dplyr::select(ang_sem, -c(con,joint)))
+
+
+#### MOMENTS ####
+full_filename <- '...mom_data.csv'
+mom_data <- read.csv(full_filename)
+
+# filter out moments where nh == bio 
+# multiply moments by 2 to represent both legs
+mom_data <- mom_data %>%
+  dplyr::filter(!con == 'nh' | !cont == 'exo') %>% 
+  mutate(value = value*2)
+# factor levels
+mom_data <- factor_and_rename(mom_data)
+# aggregate data by subject to calculate average
+mom_avg <- agg_data(mom_data, mean)
+# aggregate data by subject to calculate standard error
+mom_sem <- agg_data(mom_data, std.error)
+# bind data frames together
+mom_all <- bind_cols(mom_avg, dplyr::select(mom_sem, -c(con,joint,cont)))
+
+
+#### POWERS ####
+full_filename = '...pow_data.csv'
+pow_data <- read.csv(full_filename)
+
+# filter out powers where nh == bio 
+# multiply moments by 2 to represent both legs
+pow_data <- pow_data %>% 
+  filter(!con == 'nh' | !cont == 'exo') %>% 
+  mutate(value = value*2)
+# factor levels
+pow_data <- factor_and_rename(pow_data)
+# aggregate data by subject to calculate average
+pow_avg <- agg_data(pow_data, mean)
+# aggregate data by subject to calculate standard error  
+pow_sem <- agg_data(pow_data, std.error)
+# bind data frames together  
+pow_all <- bind_cols(pow_avg, dplyr::select(pow_sem, -c(con,joint,cont,pow)))
+```
+
+
+# Plots
+## Joint Angle & Avg. Range of Motion
+```{r plots, echo=FALSE}
+#### ANGLES ####
+p_joint_ang <- time_series %>% 
+  filter(cont == 'Overall (Exo + MTU)') %>%
+  ggplot(aes(x=cycle, y=ang_avg, color = con))+
+  geom_rect(aes(xmin = 63, xmax = Inf, ymin = -Inf, ymax = Inf),
+    fill = "lightgrey",
+    color = NA,
+    alpha = 0.2) +
+  geom_ribbon(aes(ymin = ang_avg-ang_std, ymax=ang_avg+ang_std, fill = con, color = NULL),
+              alpha = 0.00)+
+  geom_line(linewidth = 0.35)+
+  facet_grid(rows = vars(joint),
+             scales = 'free_y')+
+  scale_x_continuous(name = 'Hop Cycle [%]',
+                     expand = c(0,0))+
+  scale_y_continuous(name = 'Joint Angle [Deg.]',
+                     expand = c(0,0))+#,
+                     # limits = c(150,175))+
+  scale_color_manual(values = c('#558cc9',"#27b34b","#f8983a","#c1524f"))+
+  scale_fill_manual(values = c('#558cc9',"#27b34b","#f8983a","#c1524f"))+
+  theme_classic()+
+  theme(panel.spacing.y = unit(0.5, 'cm'),
+        legend.position = 'bottom',
+        legend.title=element_blank(),
+        text = element_text(size = 9),
+        line = element_line(linewidth = 0.35),
+        strip.text = element_blank())
+
+
+# rom
+p_joint_rom_avg <- ang_all %>% 
+  ggplot(aes(x=con,fill=con))+
+  geom_errorbar(aes(ymin=avg-sem, ymax=avg+sem),
+                width = .4,
+                linewidth=0.25)+
+  geom_bar(aes(y=avg),
+           stat ='identity',
+           width = .6)+
+  geom_hline(yintercept = 0,
+             linewidth=0.35)+
+  theme_classic()+
+  facet_grid(joint~.)+
+  scale_fill_manual(values = c('#558cc9',"#27b34b","#f8983a","#c1524f"))+
+  scale_y_continuous(name = 'Avg. Range of Motion [Deg.]',
+                     expand = c(0,.05))+
+  theme(panel.spacing.x = unit(3,'cm'),
+        panel.spacing.y = unit(.5,'cm'),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        legend.title = element_blank(),
+        legend.position = 'bottom',
+        text = element_text(size = 9),
+        line = element_line(linewidth = 0.35))
+
+p_joint_ang_all <- plot_grid(p_joint_ang,p_joint_rom_avg, align = 'h')
+
+p_joint_ang_all
+```
+
+## Joint Moments
+```{r plot_moments}
+### MOMENTS ####
+# instantaneous
+p_joint_mom_time <- generate_time_series_plot(data = time_series, y_variable = mom_avg, y_label = 'Joint Moment [Nm/kg]')
+
+# avg.
+p_joint_mom_avg <- generate_bar_plot(data = mom_all, y_label = 'Avg. Joint Moment [Nm/kg]')
+
+p_joint_mom_time
+p_joint_mom_avg
+
+```
+
+## Positive Joint Powers
+```{r plot_powers}
+# time series
+p_joint_pow_time <- generate_time_series_plot(data = time_series, y_variable = pow_avg, y_label = 'Joint Power [W/kg]')
+
+# avg.
+p_joint_pow_avg <- generate_bar_plot( data = pow_all, y_label = 'Avg. Joint Power [W/kg]', pow_type = 'pos')
+
+p_joint_pow_time
+p_joint_pow_avg
+```
