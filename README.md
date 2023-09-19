@@ -2,7 +2,7 @@
 Participant data from "The spring stiffness profile within a passive, full-leg exoskeleton affects lower-limb joint mechanics while hopping" published in TBA.
 
 # Software & Packages
-R version 3.2.2
+R version 3.2.2 <br>
 RStudio 2023.06.1
 
 # Data
