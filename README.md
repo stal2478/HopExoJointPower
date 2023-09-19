@@ -1,5 +1,5 @@
 # HopExoJointPower
-Participant data from "The spring stiffness profile within a passive, full-leg exoskeleton affects lower-limb joint mechanics while hopping" published in TBA.
+Participant data from "The spring stiffness profile within a passive, full-leg exoskeleton affects lower-limb joint mechanics while hopping". The manuscript is currently under peer-review in Journal of the Royal Society Interface.
 
 # Software & Packages
 R version 3.2.2 <br>
